@@ -1,10 +1,13 @@
-# XSSScannerPro v3.0
+# XSSScannerPro v4.0
 
-Advanced Context-Aware XSS Vulnerability Scanner designed for penetration testers and security researchers.
+Advanced Precision Context-Aware XSS Vulnerability Scanner designed for penetration testers and security researchers.
 
 ## Features
-- **Context-Aware Analysis:** Determines the exact HTML context (Script tags, Event handlers, Attributes, etc.) to minimize false positives.
-- **Multi-Vector Scanning:** Scans URL parameters, Forms (GET/POST), and HTTP Headers.
+- **Precision Context-Aware Analysis:** Evaluates exact HTML/JS contexts (Comments, Script tags, Attributes, Event handlers) to drastically reduce false positives.
+- **Multi-Vector Scanning:** 
+  - URL Parameters (GET)
+  - Forms (GET/POST)
+  - HTTP Headers (User-Agent, Referer, X-Forwarded-For, etc.)
 - **WAF Detection:** Automatically detects Web Application Firewalls.
 
 ## Installation & Setup
