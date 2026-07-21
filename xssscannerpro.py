@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-xssscannerpro v3.0 — Context-Aware XSS Vulnerability Scanner
+xssscannerpro v4.0 — Precision XSS Scanner
 Author: Elshan Mammadov
 LinkedIn: https://www.linkedin.com/in/elshanmammadoov/
 GitHub:   https://github.com/elshanmammadoov
@@ -15,7 +15,6 @@ import ssl
 import random
 import html
 from datetime import datetime
-from html.parser import HTMLParser
 
 # ─── COLORS ───────────────────────────────────────────────
 class C:
@@ -41,7 +40,7 @@ BANNER = f"""{C.C}{C.BOLD}
 ║   ██║     ██║     ███████╗██║     ██║     ███████╗██║       ║
 ║   ╚═╝     ╚═╝     ╚══════╝╚═╝     ╚═╝     ╚══════╝╚═╝       ║
 ║                                                              ║
-║   {C.G}P R O  v3.0{C.C}  ─  {C.W}Context-Aware XSS Scanner{C.C}             ║
+║   {C.G}P R O  v4.0{C.C}  ─  {C.W}Precision XSS Scanner{C.C}             ║
 ║                                                              ║
 ║   {C.D}Author : Elshan Mammadov{C.C}                               ║
 ║   {C.D}In     : https://www.linkedin.com/in/elshanmammadoov/{C.C}  ║
@@ -86,40 +85,37 @@ PAYLOADS = [
 # ─── CONTEXT-AWARE XSS DETECTOR ───────────────────────────
 class XSSContextAnalyzer:
     """
-    Analyzes WHERE the payload appears in the response.
-    This is what separates real detection from garbage.
+    Precision context analysis — only reports truly exploitable reflections.
     """
     
     @staticmethod
     def find_reflection_context(response_text, payload):
         """
-        Find all occurrences of payload in response.
-        Returns list of (position, context_type, exploitability).
+        Find payload in response and determine if it's exploitable.
+        Returns list of findings with exploitability score.
         """
         findings = []
-        search_text = response_text
         
-        # Try multiple encodings of the payload
+        # Check multiple encoding variants
         variants = [
             ('raw', payload),
-            ('url_encoded', urllib.parse.quote(payload)),
+            ('url_encoded', urllib.parse.quote(payload, safe='')),
             ('html_encoded', html.escape(payload)),
-            ('double_encoded', urllib.parse.quote(urllib.parse.quote(payload))),
         ]
         
         for variant_name, variant_payload in variants:
-            idx = search_text.find(variant_payload)
+            idx = response_text.find(variant_payload)
             if idx == -1:
                 continue
             
-            # Get surrounding context (50 chars before and after)
-            start = max(0, idx - 50)
-            end = min(len(search_text), idx + len(variant_payload) + 50)
-            context = search_text[start:end]
+            # Get context window
+            start = max(0, idx - 80)
+            end = min(len(response_text), idx + len(variant_payload) + 80)
+            context_window = response_text[start:end]
             
-            # Analyze the context
-            context_type, exploitability = XSSContextAnalyzer.analyze_context(
-                search_text, idx, len(variant_payload), context
+            # Analyze exploitability
+            context_type, exploitability, reason = XSSContextAnalyzer.analyze_exploitability(
+                response_text, idx, len(variant_payload), context_window
             )
             
             findings.append({
@@ -128,107 +124,156 @@ class XSSContextAnalyzer:
                 'position': idx,
                 'context': context_type,
                 'exploitability': exploitability,
-                'context_snippet': context
+                'reason': reason,
+                'snippet': context_window
             })
         
         return findings
     
     @staticmethod
-    def analyze_context(full_text, pos, payload_len, snippet):
+    def analyze_exploitability(full_text, pos, payload_len, snippet):
         """
-        Determine the HTML context where payload appears.
-        Returns (context_type, exploitability_score).
+        Determine if reflected payload is actually exploitable.
+        Returns (context_type, score_0_10, reason).
         """
-        before = full_text[max(0, pos-100):pos]
-        after = full_text[pos+payload_len:min(len(full_text), pos+payload_len+100)]
+        before = full_text[max(0, pos-150):pos]
+        after = full_text[pos+payload_len:min(len(full_text), pos+payload_len+150)]
         
-        # 1. Inside HTML comment → NOT EXPLOITABLE
-        if re.search(r'<!--.*?' + re.escape(snippet[:30]), full_text, re.DOTALL):
-            return ('HTML Comment', 0)
+        payload_text = full_text[pos:pos+payload_len]
         
-        # 2. Inside a <script> tag → HIGHLY EXPLOITABLE
-        script_pattern = r'<script[^>]*>(.*?)</script>'
-        for match in re.finditer(script_pattern, full_text, re.DOTALL | re.IGNORECASE):
+        # ── CRITICAL: Check if payload is inside an HTML comment ──
+        # Find the nearest <!-- before and --> after
+        last_comment_open = before.rfind('<!--')
+        next_comment_close = after.find('-->')
+        if last_comment_open != -1 and next_comment_close != -1:
+            comment_start = pos - (len(before) - last_comment_open)
+            comment_end = pos + payload_len + next_comment_close
+            if comment_start <= pos <= comment_end:
+                return ('HTML Comment', 0, 'Payload inside HTML comment — not rendered')
+        
+        # ── CRITICAL: Check if payload is inside a <script> tag ──
+        script_matches = list(re.finditer(r'<script[^>]*>(.*?)</script>', full_text, re.DOTALL | re.IGNORECASE))
+        for match in script_matches:
             if match.start() <= pos <= match.end():
-                return ('JavaScript Context (Script Tag)', 9)
+                # Inside script tag — check if it's inside a string literal
+                script_content = match.group(1)
+                rel_pos = pos - match.start() - 9  # 9 = len('<script>')
+                
+                # Check if inside a JS string
+                js_string_pattern = r'["\'][^"\']*'
+                for str_match in re.finditer(js_string_pattern, script_content):
+                    if str_match.start() <= rel_pos <= str_match.end():
+                        return ('JavaScript String Literal', 2, 'Payload inside JS string — not executed')
+                
+                return ('JavaScript Context (Script Tag)', 9, 'Payload inside <script> tag — directly executable')
         
-        # 3. Inside an event handler attribute → HIGHLY EXPLOITABLE
+        # ── CRITICAL: Check if inside inline event handler ──
         event_handlers = [
             'onclick', 'onmouseover', 'onmouseout', 'onmousedown', 'onmouseup',
             'onkeydown', 'onkeyup', 'onkeypress', 'onfocus', 'onblur',
             'onchange', 'onsubmit', 'onload', 'onerror', 'onresize',
-            'onscroll', 'oncontextmenu', 'ondrag', 'onpaste'
+            'onscroll', 'oncontextmenu', 'ondrag', 'onpaste', 'ontoggle'
         ]
         for handler in event_handlers:
-            # Check if payload appears right after an event handler
-            pattern = handler + r'\s*=\s*["\']?' + re.escape(snippet[:20])
-            if re.search(pattern, before, re.IGNORECASE):
-                return (f'Event Handler Attribute ({handler})', 9)
+            # Pattern: handler="...payload..." or handler='...payload...'
+            pattern = handler + r'\s*=\s*["\']([^"\']*?)' + re.escape(payload_text[:20])
+            if re.search(pattern, before + payload_text[:20], re.IGNORECASE):
+                return (f'Event Handler ({handler})', 9, f'Payload inside {handler} attribute — executable')
         
-        # 4. Inside a regular HTML attribute → MODERATELY EXPLOITABLE
-        attr_pattern = r'<[^>]+\s+\w+\s*=\s*["\'][^"\']*'
-        if re.search(attr_pattern, before):
-            return ('HTML Attribute Value', 7)
-        
-        # 5. Inside JavaScript inline (onclick="...") → HIGHLY EXPLOITABLE
-        js_inline = re.findall(r'on\w+\s*=\s*["\']([^"\']+)["\']', full_text)
-        for js_code in js_inline:
-            if snippet[:30] in js_code:
-                return ('Inline JavaScript', 9)
-        
-        # 6. Inside <style> tag → LOW EXPLOITABILITY (CSS injection)
-        style_pattern = r'<style[^>]*>(.*?)</style>'
-        for match in re.finditer(style_pattern, full_text, re.DOTALL | re.IGNORECASE):
+        # ── CRITICAL: Check if inside <style> tag ──
+        style_matches = list(re.finditer(r'<style[^>]*>(.*?)</style>', full_text, re.DOTALL | re.IGNORECASE))
+        for match in style_matches:
             if match.start() <= pos <= match.end():
-                return ('CSS Context', 3)
+                return ('CSS Context', 1, 'Payload inside <style> tag — CSS only, no JS execution')
         
-        # 7. Inside HTML body/text content → HIGHLY EXPLOITABLE
-        body_pattern = r'<body[^>]*>(.*?)</body>'
-        for match in re.finditer(body_pattern, full_text, re.DOTALL | re.IGNORECASE):
-            if match.start() <= pos <= match.end():
-                return ('HTML Body Content', 9)
+        # ── KEY CHECK: Is payload inside a quoted attribute value? ──
+        # Find the attribute that contains this payload
+        attr_pattern = r'(\w+)\s*=\s*("|\')([^"\']*?)("|\')'
+        for match in re.finditer(attr_pattern, full_text):
+            attr_name = match.group(1)
+            quote_char = match.group(2)
+            attr_value = match.group(3)
+            attr_start = match.start()
+            attr_end = match.end()
+            
+            if attr_start <= pos <= attr_end:
+                # Payload is inside this attribute value
+                # Check if the value is HTML-encoded or URL-encoded
+                decoded_value = html.unescape(attr_value)
+                url_decoded_value = urllib.parse.unquote(decoded_value)
+                
+                # If the raw payload appears in the decoded value, it's exploitable
+                if payload_text in decoded_value or payload_text in url_decoded_value:
+                    # Check if the attribute is "dangerous" (can execute JS)
+                    dangerous_attrs = ['href', 'src', 'action', 'data', 'formaction', 'cite', 'background', 'longdesc']
+                    if attr_name.lower() in dangerous_attrs:
+                        return (f'Dangerous Attribute ({attr_name})', 8, f'Payload in {attr_name} attribute — can execute JS')
+                    else:
+                        # Safe attribute like value, alt, title, placeholder, etc.
+                        return ('Safe Attribute (value/placeholder/etc)', 3, f'Payload in {attr_name} attribute — browser treats as text, not code')
+                else:
+                    # Payload is URL-encoded in the attribute
+                    return ('URL-Encoded in Attribute', 2, 'Payload is URL-encoded — browser decodes to text, not code')
         
-        # 8. Inside a tag name or attribute name → MODERATE
-        tag_pattern = r'<\w+[^>]*>'
-        for match in re.finditer(tag_pattern, full_text):
-            if match.start() <= pos <= match.end():
-                return ('HTML Tag Structure', 6)
+        # ── Check if payload breaks out of an attribute (quote injection) ──
+        # If payload contains quote characters that could break out
+        if '"' in payload_text or "'" in payload_text:
+            # Check if there's an unclosed attribute before the payload
+            unclosed_attr = re.search(r'(\w+)\s*=\s*([^"\'>\s]+)\s+', before)
+            if unclosed_attr:
+                return ('Unclosed Attribute (Potential Breakout)', 8, 'Payload may break out of attribute context')
         
-        # 9. Inside HTML entity-encoded text → NOT EXPLOITABLE
+        # ── Check if payload appears in plain HTML body ──
+        # Find nearest tag boundaries
+        last_tag_open = before.rfind('<')
+        last_tag_close = before.rfind('>')
+        next_tag_open = after.find('<')
+        next_tag_close = after.find('>')
+        
+        # If we're between > and <, we're in text content
+        if last_tag_close > last_tag_open and (next_tag_open == -1 or next_tag_open < next_tag_close):
+            # Check if the text content is inside a <script> or <style> (already checked above)
+            return ('HTML Text Content', 8, 'Payload reflected in HTML body — executable if not encoded')
+        
+        # ── Check for HTML entity encoding ──
         if '&lt;' in snippet or '&gt;' in snippet or '&amp;' in snippet:
-            return ('HTML Entity Encoded', 0)
+            return ('HTML Entity Encoded', 0, 'Payload is HTML-entity encoded — rendered as text')
         
-        # 10. Default: reflected in unknown context → MODERATE
-        return ('Unknown Context (Manual Review Needed)', 5)
+        # ── Default: Unknown context ──
+        return ('Unknown Context', 5, 'Manual review recommended')
     
     @staticmethod
     def check_waf(response_text):
-        """Detect if a WAF is blocking payloads."""
+        """Detect WAF presence."""
         waf_signs = [
-            'cloudflare', 'incapsula', 'akamai', 'imperva',
-            'access denied', 'forbidden', 'blocked',
-            'security violation', 'mod_security', 'web application firewall'
+            ('cloudflare', 'Cloudflare'),
+            ('incapsula', 'Incapsula'),
+            ('akamai', 'Akamai'),
+            ('imperva', 'Imperva'),
+            ('mod_security', 'ModSecurity'),
+            ('webknight', 'WebKnight'),
+            ('access denied', 'Access Denied'),
+            ('security violation', 'Security Violation'),
         ]
         text_lower = response_text.lower()
-        for sign in waf_signs:
+        for sign, name in waf_signs:
             if sign in text_lower:
-                return True, sign
+                return True, name
         return False, None
 
 
-# ─── HTTP REQUEST ENGINE ───────────────────────────────────
+# ─── HTTP ENGINE ───────────────────────────────────────────
 class HTTPEngine:
     def __init__(self):
         self.ctx = ssl.create_default_context()
         self.ctx.check_hostname = False
         self.ctx.verify_mode = ssl.CERT_NONE
-        self.session_cookies = {}
     
     def request(self, url, payload="", method="GET", data=None):
         """Send HTTP request with payload injection."""
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
                 'Accept-Encoding': 'gzip, deflate, br',
@@ -249,7 +294,7 @@ class HTTPEngine:
                     test_url = urllib.parse.urlunparse(parsed._replace(query=new_query))
                 else:
                     sep = '&' if '?' in url else '?'
-                    test_url = f"{url}{sep}test={urllib.parse.quote(payload)}"
+                    test_url = f"{url}{sep}test={urllib.parse.quote(payload, safe='')}"
             
             req = urllib.request.Request(
                 test_url if method == "GET" else url,
@@ -277,15 +322,13 @@ class XSSScannerPro:
         self.analyzer = XSSContextAnalyzer()
         self.vulnerabilities = []
         self.total_tests = 0
+        self.false_positives = 0
         self.waf_detected = False
         self.waf_name = ""
     
     def log(self, msg, level='info'):
         symbols = {'info': '[i]', 'vuln': '[!]', 'ok': '[+]', 'warn': '[?]', 'scan': '[*]'}
-        colors = {
-            'info': C.B, 'vuln': C.R + C.BOLD, 'ok': C.G,
-            'warn': C.Y, 'scan': C.C
-        }
+        colors = {'info': C.B, 'vuln': C.R+C.BOLD, 'ok': C.G, 'warn': C.Y, 'scan': C.C}
         clr = colors.get(level, C.W)
         sym = symbols.get(level, '[*]')
         print(f"{clr}{sym} {msg}{C.RST}")
@@ -302,7 +345,6 @@ class XSSScannerPro:
         """Main scanning workflow."""
         print(BANNER)
         
-        # Validate
         target_url = self.validate_url(target_url)
         if not target_url:
             self.log("Yanlış URL formatı! Nümunə: https://example.com", 'vuln')
@@ -311,9 +353,10 @@ class XSSScannerPro:
         self.log(f"Hədəf: {target_url}", 'scan')
         self.log(f"Tarix: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 'scan')
         self.log(f"Payload sayı: {len(PAYLOADS)}", 'scan')
+        self.log(f"Təhlükə skoru: ≥7/10 = VULNERABLE, <7 = safe", 'info')
         print()
         
-        # Phase 0: Connectivity check
+        # Connectivity check
         self.log("Hədəfə qoşulma yoxlanılır...", 'info')
         body, status, headers = self.http.request(target_url)
         
@@ -323,7 +366,7 @@ class XSSScannerPro:
         
         self.log(f"Hədəf cavab verdi — HTTP {status}, {len(body)} bayt", 'ok')
         
-        # Check for WAF
+        # WAF detection
         waf_found, waf_name = self.analyzer.check_waf(body)
         if waf_found:
             self.waf_detected = True
@@ -339,7 +382,7 @@ class XSSScannerPro:
         print()
         self.scan_url_params(target_url)
         
-        # Phase 2: Form discovery and testing
+        # Phase 2: Form scanning
         self.log("")
         self.log("=" * 64, 'info')
         self.log("MƏRHƏLƏ 2: Formlar", 'scan')
@@ -359,7 +402,7 @@ class XSSScannerPro:
         self.print_report(target_url)
     
     def scan_url_params(self, url):
-        """Test GET parameters with context analysis."""
+        """Test GET parameters with precision context analysis."""
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query)
         
@@ -374,7 +417,6 @@ class XSSScannerPro:
             for i, payload in enumerate(PAYLOADS, 1):
                 self.total_tests += 1
                 
-                # Show progress
                 sys.stdout.write(
                     f"\r{C.C}Test: {param_name} → Payload {i}/{len(PAYLOADS)}{C.RST}     "
                 )
@@ -393,9 +435,10 @@ class XSSScannerPro:
                                 'payload': finding['payload'][:80],
                                 'context': finding['context'],
                                 'score': finding['exploitability'],
+                                'reason': finding['reason'],
                                 'url': url
                             })
-                            print()  # newline after progress
+                            print()
                             self.log(
                                 f"VULNERABLE! Param='{param_name}' | "
                                 f"Context={finding['context']} | "
@@ -403,14 +446,17 @@ class XSSScannerPro:
                                 'vuln'
                             )
                             self.log(f"Payload: {finding['payload'][:70]}", 'vuln')
+                            self.log(f"Səbəb: {finding['reason']}", 'vuln')
                             break
+                        else:
+                            self.false_positives += 1
                 
                 time.sleep(random.uniform(0.03, 0.08))
         
-        print()  # newline
+        print()
     
     def scan_forms(self, url):
-        """Discover forms and test them."""
+        """Discover and test forms."""
         self.log("Formlar aşkar edilir...", 'info')
         
         body, status, _ = self.http.request(url)
@@ -418,7 +464,6 @@ class XSSScannerPro:
             self.log("Sayt yüklənmədi, form skanı keçilir.", 'warn')
             return
         
-        # Simple form extraction
         forms = re.findall(
             r'<form[^>]*action=["\']?([^"\'\s>]*)["\']?[^>]*method=["\']?(\w+)["\']?[^>]*>(.*?)</form>',
             body, re.DOTALL | re.IGNORECASE
@@ -434,7 +479,6 @@ class XSSScannerPro:
         for idx, (action, method, form_body) in enumerate(forms, 1):
             self.log(f"Form #{idx} test edilir (method={method.upper()})...", 'scan')
             
-            # Extract input names
             inputs = re.findall(r'<input[^>]*name=["\']?([^"\'\s>]*)', form_body, re.IGNORECASE)
             inputs += re.findall(r'<textarea[^>]*name=["\']?([^"\'\s>]*)', form_body, re.IGNORECASE)
             
@@ -442,7 +486,6 @@ class XSSScannerPro:
                 self.log("Formda input yoxdur, keçilir.", 'warn')
                 continue
             
-            # Test first few inputs with subset of payloads
             test_inputs = inputs[:3]
             test_payloads = random.sample(PAYLOADS, min(20, len(PAYLOADS)))
             
@@ -455,7 +498,6 @@ class XSSScannerPro:
                     )
                     sys.stdout.flush()
                     
-                    # Build POST data
                     post_data = {inp: payload for inp in test_inputs}
                     data_encoded = urllib.parse.urlencode(post_data)
                     
@@ -474,6 +516,7 @@ class XSSScannerPro:
                                     'payload': finding['payload'][:80],
                                     'context': finding['context'],
                                     'score': finding['exploitability'],
+                                    'reason': finding['reason'],
                                     'url': url
                                 })
                                 print()
@@ -484,6 +527,8 @@ class XSSScannerPro:
                                     'vuln'
                                 )
                                 break
+                            else:
+                                self.false_positives += 1
                     
                     time.sleep(random.uniform(0.03, 0.08))
             
@@ -506,23 +551,21 @@ class XSSScannerPro:
             self.log(f"Header test: {header_name}", 'scan')
             
             try:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0',
-                    header_name: payload
-                }
+                headers = {'User-Agent': 'Mozilla/5.0', header_name: payload}
                 req = urllib.request.Request(url, headers=headers)
                 
                 with urllib.request.urlopen(req, timeout=10, context=self.http.ctx) as resp:
                     body = resp.read().decode('utf-8', errors='ignore')
                     
-                    if payload in body or urllib.parse.quote(payload) in body:
+                    if payload in body:
                         self.log(f"VULNERABLE! Header '{header_name}' reflects payload!", 'vuln')
                         self.vulnerabilities.append({
-                            'type': 'Reflected XSS (HTTP Header)',
+                            'type': f'Reflected XSS (HTTP Header: {header_name})',
                             'param': header_name,
                             'payload': payload[:80],
                             'context': 'HTTP Header Reflection',
                             'score': 8,
+                            'reason': 'Payload reflected in response body from header',
                             'url': url
                         })
             except Exception as e:
@@ -541,6 +584,7 @@ class XSSScannerPro:
         print()
         print(f"  Hədəf URL    : {C.Y}{target_url}{C.RST}")
         print(f"  Ümumi test   : {C.W}{self.total_tests}{C.RST}")
+        print(f"  Yanlış alarm: {C.D}{self.false_positives}{C.RST}")
         print(f"  Zəiflik sayı : {C.R if self.vulnerabilities else C.G}{len(self.vulnerabilities)}{C.RST}")
         print(f"  Tarix        : {C.D}{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{C.RST}")
         print()
@@ -555,6 +599,7 @@ class XSSScannerPro:
                 print(f"  {C.R}│{C.RST} Parametr   : {C.W}{vuln['param']}{C.RST}")
                 print(f"  {C.R}│{C.RST} Kontekst   : {C.W}{vuln['context']}{C.RST}")
                 print(f"  {C.R}│{C.RST} Təhlükə    : {C.R}{vuln['score']}/10{C.RST}")
+                print(f"  {C.R}│{C.RST} Səbəb      : {C.D}{vuln['reason']}{C.RST}")
                 print(f"  {C.R}│{C.RST} Payload    : {C.D}{vuln['payload'][:70]}{C.RST}")
                 print(f"  {C.R}└{'─' * 50}{C.RST}")
                 print()
@@ -578,7 +623,6 @@ class XSSScannerPro:
 def main():
     print(BANNER)
     
-    # Get target URL
     if len(sys.argv) > 1:
         target = sys.argv[1]
     else:
