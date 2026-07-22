@@ -18,7 +18,7 @@ sudo apt install python3 python3-pip git -y
 ---------------------------------------------------------------------------------------------------------------------
 3. Repozitoriyanı klonlayın
 
-git clone [https://github.com/elshanmammadoov/xssscannerpro.git](https://github.com/elshanmammadoov/xssscannerpro.git)
+git clone https://github.com/elshanmammadoov/xssscannerpro.git
 ----------------------------------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------------------------------
 4. Yaranan qovluğun içinə daxil olun
