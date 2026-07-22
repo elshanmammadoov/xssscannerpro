@@ -1,37 +1,37 @@
-# XSSScannerPro v4.0
+# XSS Scanner Pro
 
-Advanced Precision Context-Aware XSS Vulnerability Scanner designed for penetration testers and security researchers.
+Simple and fast automated XSS vulnerability scanner.
 
-## Features
-- **Precision Context-Aware Analysis:** Evaluates exact HTML/JS contexts (Comments, Script tags, Attributes, Event handlers) to drastically reduce false positives.
-- **Multi-Vector Scanning:** 
-  - URL Parameters (GET)
-  - Forms (GET/POST)
-  - HTTP Headers (User-Agent, Referer, X-Forwarded-For, etc.)
-- **WAF Detection:** Automatically detects Web Application Firewalls.
+## Installation & Usage (Linux)
 
-## Installation & Setup
+Terminalı sıfırdan aşağıdakı əmrləri ardıcıl olaraq icra edin:
+--------------------------------------------------------------------------------------------------------------------
+### 1. Sistem paketlərini yeniləyin
+```
+sudo apt update
+---------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------
+2. Lazımi alətləri (Python3, pip, git) quraşdırın
 
-Run the following commands in your terminal to install and make it globally accessible:
+sudo apt install python3 python3-pip git -y
+---------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------
+3. Repozitoriyanı klonlayın
 
-```bash
 git clone [https://github.com/elshanmammadoov/xssscannerpro.git](https://github.com/elshanmammadoov/xssscannerpro.git)
+----------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------
+4. Yaranan qovluğun içinə daxil olun
+
 cd xssscannerpro
-chmod +x xssscannerpro.py
-cp xssscannerpro.py /usr/local/bin/xssscannerpro
+---------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------
+5. Tələb olunan kitabxanaları quraşdırın
 
-Usage
-After global installation, you can run the tool from anywhere in your terminal:
+pip3 install -r requirements.txt --break-system-packages
+---------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------
+6. Aləti işə salın
 
-Bash
-xssscannerpro
-Or pass the target directly:
-
-Bash
-xssscannerpro [https://example.com](https://example.com)
-Author
-Elshan Mammadov
-
-LinkedIn: elshanmammadoov
-
-GitHub: elshanmammadoov
+python3 xssscannerpro.py
+---------------------------------------------------------------------------------------------------------------------
