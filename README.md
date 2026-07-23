@@ -1,30 +1,93 @@
-# 🛡️ XSS Scanner Pro
+# XSSScannerPro
 
-> Simple, fast, and concurrent automated XSS vulnerability scanner.
+**Enterprise-Grade Precision XSS, SQLi & WAF-Bypass Scanner**
 
 ---
 
-## 🚀 Installation & Usage (Linux)
+## 📦 Installation
 
-Terminalı açın və aşağıdakı blokları kopyalayıb birbaşa terminala yapışdırın:
+Clone the repository and enter the project directory:
 
 ```bash
-sudo apt update && sudo apt install python3 python3-pip git -y
---------------------------------------------------------------------------------------------------------------------
 git clone https://github.com/elshanmammadoov/xssscannerpro.git
---------------------------------------------------------------------------------------------------------------------
 cd xssscannerpro
---------------------------------------------------------------------------------------------------------------------
-chmod +x xssscannerpro && sudo cp xssscannerpro /usr/local/bin/
---------------------------------------------------------------------------------------------------------------------
-(xssscannerpro https://example.com/search?q=test)
+```
 
+Make the scanner executable:
 
+```bash
+chmod +x scanner.py
+```
 
------Options & Argument-----
-+--------------------+------------------------------------+--------------------------------+
-| Flag               | Description                        | Example                        |
-+--------------------+------------------------------------+--------------------------------+
-| -t, --threads      | Set parallel threads (Default: 15) | xssscannerpro <url> -t 30      |
-| -o, --output       | Save report to a text file         | xssscannerpro <url> -o rep.txt |
-+--------------------+------------------------------------+--------------------------------+
+Install it globally:
+
+```bash
+sudo cp scanner.py /usr/local/bin/xssscannerpro
+```
+
+Verify the installation:
+
+```bash
+xssscannerpro --help
+```
+
+---
+
+## 🚀 Usage
+
+### Basic Scan (GET)
+
+```bash
+xssscannerpro https://example.com/page.php?id=1
+```
+
+### Multi-threaded Scan
+
+```bash
+xssscannerpro https://example.com/page.php?id=1 -t 30
+```
+
+### POST Request
+
+```bash
+xssscannerpro https://example.com/login.php \
+  --method POST \
+  --data "username=test&password=test"
+```
+
+### Save Results to JSON
+
+```bash
+xssscannerpro https://example.com/login.php \
+  --method POST \
+  --data "username=test&password=test" \
+  --output report.json
+```
+
+### Interactive Mode
+
+```bash
+xssscannerpro
+```
+
+If no URL is provided, the scanner will prompt you to enter one.
+
+---
+
+## ⚙️ Command-Line Options
+
+|        Option        |              Description                         |
+| :--------------------|:-------------------------------------------------|
+| `url`  | Target URL. | If omitted, interactive mode is started.         |
+| `-t`, `--threads`    | Number of concurrent threads (default: `15`).    |
+| `--method`           | HTTP method (`GET` or `POST`). Default: `GET`.   |
+| `--data`             | POST request body (e.g. `"user=admin&pass=123"`) |
+| `-o`, `--output`     | Save scan results to a JSON file.                |
+
+---
+
+## ⚠️ Disclaimer
+
+This tool is intended **only for authorized security testing and educational purposes**.
+
+Do **not** use it against systems you do not own or do not have explicit permission to test.
