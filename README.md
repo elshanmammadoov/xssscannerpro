@@ -1,93 +1,42 @@
-# XSSScannerPro
+# XSS Scanner PRO (v9.2)
 
-**Enterprise-Grade Precision XSS, SQLi & WAF-Bypass Scanner**
+Advanced, asynchronous, and multi-vector XSS (Cross-Site Scripting) vulnerability scanner built with Python. Designed for security professionals and penetration testers to automatically discover Reflected, Stored, and DOM-based XSS flaws while effectively filtering out false positives.
 
----
+## Features
 
-## 📦 Installation
+- **Asynchronous Engine**: Powered by `asyncio` and `aiohttp` for fast, concurrent scanning.
+- **Smart Crawler**: Automatically discovers endpoints, parameters, and HTML forms.
+- **Multi-Vector Testing**: 
+  - Reflected XSS (GET parameters & body vectors)
+  - Stored / Form-based XSS (POST/GET forms)
+  - DOM-based XSS (URL fragment manipulation)
+- **False Positive Filter**: Analyzes HTML response contexts to eliminate false positives (checks meta tags, comments, entity encoding, and active script execution contexts).
+- **WAF Detection**: Automatically identifies common Web Application Firewalls (Cloudflare, AWS WAF, Akamai, etc.).
+- **JSON Reporting**: Saves detailed scan results into a structured JSON file.
 
-Clone the repository and enter the project directory:
+## Installation
 
 ```bash
-git clone https://github.com/elshanmammadoov/xssscannerpro.git
+# Clone the repository
+git clone [https://github.com/elshanmammadoov/xssscannerpro.git](https://github.com/elshanmammadoov/xssscannerpro.git)
 cd xssscannerpro
-```
 
-Make the scanner executable:
+# Install dependencies
+pip install aiohttp beautifulsoup4
 
-```bash
-chmod +x scanner.py
-```
+# Make it globally accessible (optional)
+sudo cp xssscannerpro /usr/local/bin/xssscannerpro
+sudo chmod +x /usr/local/bin/xssscannerpro
 
-Install it globally:
 
-```bash
-sudo cp scanner.py /usr/local/bin/xssscannerpro
-```
-
-Verify the installation:
-
-```bash
-xssscannerpro --help
-```
-
----
-
-## 🚀 Usage
-
-### Basic Scan (GET)
-
-```bash
-xssscannerpro https://example.com/page.php?id=1
-```
-
-### Multi-threaded Scan
-
-```bash
-xssscannerpro https://example.com/page.php?id=1 -t 30
-```
-
-### POST Request
-
-```bash
-xssscannerpro https://example.com/login.php \
-  --method POST \
-  --data "username=test&password=test"
-```
-
-### Save Results to JSON
-
-```bash
-xssscannerpro https://example.com/login.php \
-  --method POST \
-  --data "username=test&password=test" \
-  --output report.json
-```
-
-### Interactive Mode
-
-```bash
-xssscannerpro
-```
-
-If no URL is provided, the scanner will prompt you to enter one.
-
----
-
-## ⚙️ Command-Line Options
-
-|        Option        |              Description                         |
-| :--------------------|:-------------------------------------------------|
-| `url`  | Target URL. | If omitted, interactive mode is started.         |
-| `-t`, `--threads`    | Number of concurrent threads (default: `15`).    |
-| `--method`           | HTTP method (`GET` or `POST`). Default: `GET`.   |
-| `--data`             | POST request body (e.g. `"user=admin&pass=123"`) |
-| `-o`, `--output`     | Save scan results to a JSON file.                |
-
----
-
-## ⚠️ Disclaimer
-
-This tool is intended **only for authorized security testing and educational purposes**.
-
-Do **not** use it against systems you do not own or do not have explicit permission to test.
+-----------------------------------------------------------------------------------------|
+Usage
+Run the scanner directly against a target URL:
+--
+Bash
+xssscannerpro [https://example.com](https://example.com)
+Or save the results to a specific JSON file:
+-----------------------------------------------------------------------------------------|
+Bash
+python3 xssscannerpro [https://example.com](https://example.com) --json report.json
+-----------------------------------------------------------------------------------------|
